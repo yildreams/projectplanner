@@ -49,35 +49,59 @@ function removeLines(start, count) {
 
 function seed() {
   const it = (type, title, col, row, w, h = 1, body = '', notes = '') => ({ id: uid(), type, title, body, notes, col, row, w, h, color: TYPES.find(x => x.k === type).c });
-  const lang = (navigator.language || 'en').startsWith('tr') ? 'tr' : 'en';
+  const lang = (navigator.language || 'en').startsWith('tr') ? 'tr' : 'en', L = (en, tr) => lang === 'tr' ? tr : en;
   const rw = (label, sub, lanes) => ({ id: uid(), label, sub, lanes });
-  // item.row is a flat lane index: General = 0, MCO = 1-2, Simplify = 3-4, UI/UX = 5-6
+  // sample project, dated relative to today (start = Monday two weeks ago) so the demo never looks stale
+  const s = new Date(); s.setHours(0, 0, 0, 0); s.setDate(s.getDate() - ((s.getDay() + 6) % 7) - 14);
+  const day = n => { const d = new Date(s); d.setDate(d.getDate() + n); return d; };
+  const short = n => day(n).toLocaleDateString(L('en-GB', 'tr-TR'), { day: 'numeric', month: 'short' });
+  // item.row is a flat lane index: Discovery = 0, Backend = 1-2, Mobile app = 3-4, Launch = 5-6
   return {
-    title: 'Project Plan', lang, start: '2026-10-01', sprintDays: 14, sprints: 12, ui: { boxes: true, list: true },
-    markers: [{ id: uid(), date: '2026-11-10', label: 'Live', color: '#1f8f5f' }],
-    rows: [rw('General', 'Setup & foundation', 1), rw('MCO Replacement', 'Go-live Nov 2026', 2), rw('Simplify Replacement', "Go-live Dec '26 – Jan '27", 2), rw('UI/UX Modernization', 'Continuous · final version Mar 2027', 2)],
+    title: L('Mobile Ordering App', 'Mobil Sipariş Uygulaması'), lang, start: iso(s), sprintDays: 14, sprints: 12, ui: { boxes: true, list: true },
+    markers: [{ id: uid(), date: iso(day(100)), label: L('Pilot', 'Pilot'), color: '#3a6df0' }, { id: uid(), date: iso(day(129)), label: L('Launch', 'Lansman'), color: '#1f8f5f' }],
+    rows: [
+      rw(L('Discovery & UX', 'Keşif & UX'), L('Research, flows, visual design', 'Araştırma, akışlar, görsel tasarım'), 1),
+      rw(L('Backend & API', 'Backend & API'), L('Ordering, payments, loyalty', 'Sipariş, ödeme, sadakat'), 2),
+      rw(L('Mobile app', 'Mobil uygulama'), L('iOS & Android', 'iOS & Android'), 2),
+      rw(L('Launch', 'Lansman'), L('Pilot stores, then all stores', 'Önce pilot şubeler, sonra tümü'), 2)
+    ],
     items: [
-      it('build', 'Project setup', 0, 0, 1, 1, '', 'Kickoff 30 Sep\nEnvironments and access\nBacklog baselined'), it('build', 'Core functions', 1, 0, 2, 1, '', 'Shared foundation\nBase flows end to end'),
-      it('build', 'MCO build', 0, 1, 1), it('test', 'E2E & UAT', 1, 1, 1, 1, '', 'E2E test pack signed off\nUAT with business users'), it('golive', 'Go-live ~10 Nov', 2, 1, 1, 1, '', 'Go / no-go review\nCutover checklist'), it('rollout', 'Hypercare & parallel run', 3, 2, 4, 1, '', 'Daily triage during hypercare\nParallel run with legacy MCO'),
-      it('build', 'Simplify build', 0, 3, 3), it('test', 'E2E & UAT', 3, 3, 2), it('golive', 'Go-live window', 5, 3, 2), it('rollout', 'Waves 2–4 & parallel run', 7, 4, 3),
-      it('design', 'UX research & design system', 0, 5, 3, 1, '', 'User research and approval\nDesign system & flows'), it('build', 'Incremental UI build', 3, 6, 7, 1, 'One UI drop per sprint', 'UI drop 1–5\nQuick wins shipped every sprint'), it('test', 'Final E2E & UAT', 10, 6, 1), it('golive', 'Final ~24 Mar', 11, 6, 1)
+      it('design', L('User research', 'Kullanıcı araştırması'), 0, 0, 1, 1, '', L('Interviews with 12 regular customers\nBarista workshop\nCompetitor app review', '12 düzenli müşteriyle görüşme\nBarista atölyesi\nRakip uygulama incelemesi')),
+      it('design', L('UX & visual design', 'UX & görsel tasarım'), 1, 0, 2, 1, '', L('Order and pick-up flows\nDesign system\nAccessibility review', 'Sipariş ve teslim alma akışları\nTasarım sistemi\nErişilebilirlik incelemesi')),
+      it('demo', L('Prototype demo', 'Prototip demosu'), 3, 0, 1),
+      it('build', L('Menu & ordering API', 'Menü & sipariş API'), 1, 1, 3, 1, '', L('Menu, prices and stock per store\nOrder status updates\nAdmin panel for store managers', 'Şube bazlı menü, fiyat ve stok\nSipariş durum bildirimleri\nŞube müdürleri için yönetim paneli')),
+      it('build', L('Payments', 'Ödeme'), 4, 1, 2, 1, L('Card + wallet', 'Kart + cüzdan'), L('Card payments and 3-D Secure\nApple Pay / Google Pay\nRefunds', 'Kartla ödeme ve 3-D Secure\nApple Pay / Google Pay\nİadeler')),
+      it('test', L('Load & security tests', 'Yük & güvenlik testleri'), 6, 1, 1),
+      it('build', L('POS integration', 'POS entegrasyonu'), 2, 2, 2, 1, '', L('Orders print at the bar\nNightly stock sync', 'Siparişler bar yazıcısına düşer\nGece stok senkronizasyonu')),
+      it('build', L('Loyalty points', 'Sadakat puanları'), 4, 2, 3, 1, L('Stamp card → points', 'Kaşe kartı → puan')),
+      it('build', L('iOS & Android app', 'iOS & Android uygulaması'), 2, 3, 4, 1, L('One release per sprint', 'Her sprint bir sürüm'), L('Browse menu and customise drinks\nOrder ahead, pick a pick-up time\nPush notification when ready\nOrder history and reorder', 'Menüyü gez, içeceği özelleştir\nÖnceden sipariş, teslim saati seç\nHazır olunca bildirim\nSipariş geçmişi ve tekrar sipariş')),
+      it('test', L('E2E & UAT', 'E2E & UAT'), 6, 3, 1, 1, '', L('Test with staff in two stores\nApp store review', 'İki şubede personelle test\nUygulama mağazası onayı')),
+      it('golive', L('Pilot go-live', 'Pilot canlıya geçiş'), 7, 3, 1),
+      it('freeze', L('Holiday freeze (TBC)', 'Tatil dönemi dondurma (TBD)'), 9, 3, 1, 2),
+      it('demo', L('Sprint demo', 'Sprint demosu'), 3, 4, 1), it('demo', L('Sprint demo', 'Sprint demosu'), 5, 4, 1),
+      it('rollout', L('Pilot in 3 stores', '3 şubede pilot'), 7, 5, 2, 1, '', L('Daily feedback from baristas\nFix-forward releases\nGo / no-go for full launch', 'Baristalardan günlük geri bildirim\nHızlı düzeltme sürümleri\nTam lansman için karar toplantısı')),
+      it('golive', L('Launch ~' + short(129), 'Lansman ~' + short(129)), 9, 5, 1),
+      it('rollout', L('Rollout to all stores', 'Tüm şubelere yaygınlaştırma'), 10, 5, 2),
+      it('note', L('Marketing campaign', 'Pazarlama kampanyası'), 7, 6, 3, 1, L('Social, in-store, email', 'Sosyal medya, şube içi, e-posta'), L('Free drink with first app order\nPosters and table cards in stores\nLaunch email to loyalty members', 'İlk uygulama siparişine bedava içecek\nŞubelerde afiş ve masa kartı\nSadakat üyelerine lansman e-postası'))
     ]
   };
 }
 
 /* ---------- persistence ---------- */
+const LS_KEY = 'planner.plan.v2';
 function save() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     const body = JSON.stringify(plan);
-    try { localStorage.setItem('plan', body); } catch {}
+    try { localStorage.setItem(LS_KEY, body); } catch {}
     fetch('/api/plan', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body }).catch(() => {});
   }, 300);
 }
 async function load() {
   let p = null;
   try { const r = await fetch('/api/plan'); if (r.ok) p = await r.json(); } catch {}
-  if (!p) { try { p = JSON.parse(localStorage.getItem('plan')); } catch {} }
+  if (!p) { try { p = JSON.parse(localStorage.getItem(LS_KEY)); } catch {} }
+  try { localStorage.removeItem('plan'); } catch {}   // pre-v2 key held the old sample project
   plan = p && p.items ? p : seed();
   plan.rows.forEach(r => { r.lanes = r.lanes || 1; r.sub = r.sub || ''; });
   plan.markers = plan.markers || [];
