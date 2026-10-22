@@ -1,6 +1,6 @@
 // Zero-dependency server: static files + plan persistence (data/plan.json)
 const http = require('http'), fs = require('fs'), path = require('path');
-const { buildXlsx } = require('./xlsx');
+const { buildXlsx } = require('./public/xlsx');
 const PUB = path.join(__dirname, 'public');
 const DATA = path.join(__dirname, 'data', 'plan.json');
 const PORT = process.env.PORT || 3000;

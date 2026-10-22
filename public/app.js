@@ -13,12 +13,14 @@ const TYPES = [
 const SW = ['#23233f', '#e8883b', '#cfcbe0', '#f3cfa8', '#ffffff', '#fff3b0', '#bfe3c8', '#f4b6b6'];
 const I18N = {
   en: { panel: 'Components', hint: 'Drag a component onto the grid, or click it to add automatically. Click a component to edit it and write its content. Hover a row name to split it into parallel lanes.',
-    addRow: '+ Add row', start: 'Start date', days: 'Sprint days', count: 'Sprints', print: 'Print', name: 'Title', noteL: 'Bar text', notesL: 'Content · one item per line', details: 'Details', boxes: 'Boxes', list: 'List', noContent: 'No content yet. Click a component and write items in its content field.', exportX: 'Export Excel', exportFail: 'Export failed.',
+    addRow: '+ Add row', start: 'Start date', days: 'Sprint days', count: 'Sprints', print: 'Print', name: 'Title', noteL: 'Bar text', notesL: 'Content · one item per line', details: 'Details', boxes: 'Boxes', list: 'List', noContent: 'No content yet. Click a component and write items in its content field.', exportX: 'Excel (.xlsx)', exportFail: 'Export failed.',
+    exportM: 'Export', exportXs: 'Plan + details, sortable dates', exportP: 'PNG image', exportPs: 'High-resolution picture of the plan', copyP: 'Copy image', copyPs: 'Paste into slides, mail or chat', copied: 'Image copied to clipboard.', sprintsU: 'sprints', daysU: 'days',
     color: 'Color', size: 'Size (cols × rows)', dup: 'Duplicate', del: 'Delete', close: 'Close', today: 'Today', sprint: 'Sprint',
     rows: 'Rows', newRow: 'New row', rowName: 'Row name', rowSub: 'Subtitle', split: 'Split row (add a parallel lane)', merge: 'Remove last lane', marker: 'Date line', live: 'Live', mDate: 'Date', add: 'Add', ptitle: 'Project title', delRow: 'Delete row', noSpace: 'No free space for this component.',
     build: 'Build', design: 'Design', test: 'E2E & UAT', golive: 'Go-live', rollout: 'Rollout & parallel run', demo: 'Demo', note: 'Note', freeze: 'Freeze (TBC)' },
   tr: { panel: 'Bileşenler', hint: 'Bileşeni ızgaraya sürükleyip bırak ya da tıklayarak otomatik ekle. Düzenlemek ve içerik yazmak için bileşene tıkla. Satır adının üzerine gelip satırı paralel şeritlere bölebilirsin.',
-    addRow: '+ Satır ekle', start: 'Başlangıç', days: 'Sprint günü', count: 'Sprint sayısı', print: 'Yazdır', name: 'Başlık', noteL: 'Çubuk metni', notesL: 'İçerik · her satır bir madde', details: 'Detaylar', boxes: 'Kutular', list: 'Liste', noContent: 'Henüz içerik yok. Bir bileşene tıkla ve içerik alanına madde yaz.', exportX: "Excel'e aktar", exportFail: 'Dışa aktarım başarısız.',
+    addRow: '+ Satır ekle', start: 'Başlangıç', days: 'Sprint günü', count: 'Sprint sayısı', print: 'Yazdır', name: 'Başlık', noteL: 'Çubuk metni', notesL: 'İçerik · her satır bir madde', details: 'Detaylar', boxes: 'Kutular', list: 'Liste', noContent: 'Henüz içerik yok. Bir bileşene tıkla ve içerik alanına madde yaz.', exportX: 'Excel (.xlsx)', exportFail: 'Dışa aktarım başarısız.',
+    exportM: 'Dışa aktar', exportXs: 'Plan + detaylar, sıralanabilir tarihler', exportP: 'PNG görsel', exportPs: 'Planın yüksek çözünürlüklü görseli', copyP: 'Görseli kopyala', copyPs: 'Sunuma, maile ya da sohbete yapıştır', copied: 'Görsel panoya kopyalandı.', sprintsU: 'sprint', daysU: 'gün',
     color: 'Renk', size: 'Boyut (sütun × satır)', dup: 'Çoğalt', del: 'Sil', close: 'Kapat', today: 'Bugün', sprint: 'Sprint',
     rows: 'Satırlar', newRow: 'Yeni satır', rowName: 'Satır adı', rowSub: 'Alt metin', split: 'Satırı böl (paralel şerit ekle)', merge: 'Son şeridi kaldır', marker: 'Tarih çizgisi', live: 'Live', mDate: 'Tarih', add: 'Ekle', ptitle: 'Proje başlığı', delRow: 'Satırı sil', noSpace: 'Bu bileşen için boş yer yok.',
     build: 'Geliştirme', design: 'Tasarım', test: 'E2E & UAT', golive: 'Go-live', rollout: 'Yaygınlaştırma & paralel çalışma', demo: 'Demo', note: 'Not', freeze: 'Dondurma (TBD)' }
@@ -90,6 +92,8 @@ const textColor = hex => {
   return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#23233f' : '#ffffff';
 };
 const locale = () => plan.lang === 'tr' ? 'tr-TR' : 'en-GB';
+let toastTimer;
+function toast(msg) { const el = $('#toast'); el.textContent = msg; el.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => el.hidden = true, 2500); }
 const startDate = () => new Date(plan.start + 'T00:00:00');
 function free(it, c, r, w, h) {
   if (c < 0 || r < 0 || c + w > plan.sprints || r + h > LN()) return false;
@@ -351,15 +355,32 @@ function init() {
   $('#ptitle').oninput = e => { plan.title = e.target.value; document.title = plan.title || 'Project Planner'; save(); };
   $('#toggle').onclick = () => $('#side').classList.toggle('collapsed');
   $('#print').onclick = () => print();
-  $('#export').onclick = async () => {
+  const exportXlsx = async () => {
+    let blob = null;
+    try { const r = await fetch('/api/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(plan) }); if (r.ok) blob = await r.blob(); } catch {}
+    // static hosting (e.g. GitHub Pages) has no server: build the workbook in the browser
+    if (!blob) blob = new Blob([buildXlsx(plan)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = ((plan.title || 'project-plan').replace(/[^\p{L}\p{N}_-]+/gu, '_') || 'project-plan') + '.xlsx';
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  };
+  const exMenu = open => { $('#exMenu').hidden = !open; $('#export').setAttribute('aria-expanded', open); if (open) $('#exMenu button').focus(); };
+  $('#export').onclick = () => exMenu($('#exMenu').hidden);
+  $('#exMenu').onclick = async e => {
+    const x = e.target.closest('[data-x]')?.dataset.x; if (!x) return;
+    exMenu(false);
     try {
-      const r = await fetch('/api/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(plan) });
-      if (!r.ok) throw new Error(await r.text());
-      const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob());
-      a.download = ((plan.title || 'project-plan').replace(/[^\p{L}\p{N}_-]+/gu, '_') || 'project-plan') + '.xlsx';
-      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+      if (x === 'xlsx') await exportXlsx();
+      else if (x === 'png') await exportPng();
+      else { await copyPng(); toast(t('copied')); }
     } catch (err) { alert(t('exportFail') + ' ' + (err.message || '')); }
   };
+  $('#exMenu').onkeydown = e => {
+    const bs = [...$('#exMenu').querySelectorAll('button')], i = bs.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); bs[(i + (e.key === 'ArrowDown' ? 1 : bs.length - 1)) % bs.length].focus(); }
+    if (e.key === 'Escape') { exMenu(false); $('#export').focus(); }
+  };
+  document.addEventListener('pointerdown', e => { if (!e.target.closest('.xm')) exMenu(false); });
   document.querySelectorAll('.dv').forEach(b => b.onclick = () => {
     const v = b.dataset.v; plan.ui[v] = !plan.ui[v];
     if (!plan.ui.boxes && !plan.ui.list) plan.ui[v] = true;

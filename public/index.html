@@ -24,7 +24,14 @@
         <label><span data-i="count"></span><input type="number" id="sCount" min="1" max="52"></label>
       </div>
       <div class="lang"><button data-l="en">EN</button><button data-l="tr">TR</button></div>
-      <button id="export" class="btn pri" data-i="exportX"></button>
+      <div class="xm">
+        <button id="export" class="btn pri" aria-haspopup="menu" aria-expanded="false"><span data-i="exportM"></span> ▾</button>
+        <div id="exMenu" role="menu" hidden>
+          <button role="menuitem" data-x="xlsx"><b data-i="exportX"></b><small data-i="exportXs"></small></button>
+          <button role="menuitem" data-x="png"><b data-i="exportP"></b><small data-i="exportPs"></small></button>
+          <button role="menuitem" data-x="copy"><b data-i="copyP"></b><small data-i="copyPs"></small></button>
+        </div>
+      </div>
       <button id="print" class="btn" data-i="print"></button>
     </header>
     <div id="scroll">
@@ -51,6 +58,9 @@
   <div class="row"><span data-i="color"></span><div id="mSw"></div><input type="color" id="mColor"></div>
   <div class="row"><button id="mAdd" class="btn" data-i="add"></button><button id="mDel" class="btn danger" data-i="del"></button><button id="mClose" class="btn" data-i="close"></button></div>
 </div>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+<script src="xlsx.js"></script>
 <script src="app.js"></script>
+<script src="snapshot.js"></script>
 </body>
 </html>
