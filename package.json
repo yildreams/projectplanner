@@ -1,0 +1,8 @@
+{
+  "name": "project-planner",
+  "version": "1.0.0",
+  "description": "One-page drag & drop project plan (EN/TR)",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "license": "MIT"
+}

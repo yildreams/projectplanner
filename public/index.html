@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project Planner</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <h2 data-i="panel"></h2>
+    <p class="hint" data-i="hint"></p>
+    <div id="palette"></div>
+    <button id="addRow" class="btn" data-i="addRow"></button>
+  </aside>
+  <main>
+    <header>
+      <button id="toggle" class="btn ico" aria-label="Toggle panel">☰</button>
+      <input id="ptitle" aria-label="Project title" spellcheck="false">
+      <div class="set">
+        <label><span data-i="start"></span><input type="date" id="sStart"></label>
+        <label><span data-i="days"></span><input type="number" id="sDays" min="1" max="60"></label>
+        <label><span data-i="count"></span><input type="number" id="sCount" min="1" max="52"></label>
+      </div>
+      <div class="lang"><button data-l="en">EN</button><button data-l="tr">TR</button></div>
+      <button id="export" class="btn pri" data-i="exportX"></button>
+      <button id="print" class="btn" data-i="print"></button>
+    </header>
+    <div id="scroll">
+      <div id="grid"></div>
+      <section id="details">
+        <div class="dh"><h3 data-i="details"></h3><div class="seg"><button class="dv" data-v="boxes" data-i="boxes"></button><button class="dv" data-v="list" data-i="list"></button></div></div>
+        <div id="dbody"></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<div id="editor" hidden>
+  <label><span data-i="name"></span><input id="eTitle"></label>
+  <label><span data-i="noteL"></span><textarea id="eBody" rows="2"></textarea></label>
+  <label><span data-i="notesL"></span><textarea id="eNotes" rows="6"></textarea></label>
+  <div class="row"><span data-i="color"></span><div id="eSw"></div><input type="color" id="eColor"></div>
+  <div class="row"><span data-i="size"></span><input type="number" id="eW" min="1"> × <input type="number" id="eH" min="1"></div>
+  <div class="row"><button id="eDup" class="btn" data-i="dup"></button><button id="eDel" class="btn danger" data-i="del"></button><button id="eClose" class="btn" data-i="close"></button></div>
+</div>
+<div id="mEditor" hidden>
+  <label><span data-i="name"></span><input id="mTitle"></label>
+  <label><span data-i="mDate"></span><input type="date" id="mDate"></label>
+  <div class="row"><span data-i="color"></span><div id="mSw"></div><input type="color" id="mColor"></div>
+  <div class="row"><button id="mAdd" class="btn" data-i="add"></button><button id="mDel" class="btn danger" data-i="del"></button><button id="mClose" class="btn" data-i="close"></button></div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

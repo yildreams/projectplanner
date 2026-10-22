@@ -1,0 +1,294 @@
+'use strict';
+// Zero-dependency .xlsx writer for the project planner (inline strings, styles, merges, zip via zlib).
+const zlib = require('zlib');
+
+/* ---------- zip ---------- */
+const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+const crc32 = buf => { let c = 0xFFFFFFFF; for (let i = 0; i < buf.length; i++) c = CRC[(c ^ buf[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+function zip(files) {
+  const parts = [], central = []; let offset = 0;
+  const d = new Date(), time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1), date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+  for (const f of files) {
+    const name = Buffer.from(f.name, 'utf8'), raw = Buffer.from(f.data, 'utf8'), comp = zlib.deflateRawSync(raw), crc = crc32(raw);
+    const lh = Buffer.alloc(30);
+    lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(0x0800, 6); lh.writeUInt16LE(8, 8); lh.writeUInt16LE(time, 10); lh.writeUInt16LE(date, 12);
+    lh.writeUInt32LE(crc, 14); lh.writeUInt32LE(comp.length, 18); lh.writeUInt32LE(raw.length, 22); lh.writeUInt16LE(name.length, 26);
+    parts.push(lh, name, comp);
+    const ch = Buffer.alloc(46);
+    ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt16LE(0x0800, 8); ch.writeUInt16LE(8, 10); ch.writeUInt16LE(time, 12); ch.writeUInt16LE(date, 14);
+    ch.writeUInt32LE(crc, 16); ch.writeUInt32LE(comp.length, 20); ch.writeUInt32LE(raw.length, 24); ch.writeUInt16LE(name.length, 28); ch.writeUInt32LE(offset, 42);
+    central.push(ch, name);
+    offset += 30 + name.length + comp.length;
+  }
+  const cd = Buffer.concat(central), end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(files.length, 8); end.writeUInt16LE(files.length, 10); end.writeUInt32LE(cd.length, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...parts, cd, end]);
+}
+
+/* ---------- xlsx primitives ---------- */
+const esc = s => String(s ?? '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const colName = n => { let s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
+const NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+
+class Registry {
+  constructor() {
+    this.fonts = [];
+    this.fills = ['<fill><patternFill patternType="none"/></fill>', '<fill><patternFill patternType="gray125"/></fill>'];
+    this.borders = ['<border><left/><right/><top/><bottom/><diagonal/></border>'];
+    this.xfs = []; this.map = new Map();
+    this.xf({});
+  }
+  idx(arr, xml) { let i = arr.indexOf(xml); if (i < 0) { arr.push(xml); i = arr.length - 1; } return i; }
+  font(f = {}) { return this.idx(this.fonts, `<font>${f.b ? '<b/>' : ''}${f.i ? '<i/>' : ''}<sz val="${f.sz || 10}"/><color rgb="FF${f.c || '23233F'}"/><name val="Arial"/><family val="2"/></font>`); }
+  fill(c) { return c ? this.idx(this.fills, `<fill><patternFill patternType="solid"><fgColor rgb="FF${c}"/><bgColor indexed="64"/></patternFill></fill>`) : 0; }
+  border(bd) {
+    if (!bd) return 0;
+    const side = (n, k) => bd[k] ? `<${n} style="${bd[k][0]}"><color rgb="FF${bd[k][1]}"/></${n}>` : `<${n}/>`;
+    return this.idx(this.borders, `<border>${side('left', 'l')}${side('right', 'r')}${side('top', 't')}${side('bottom', 'b')}<diagonal/></border>`);
+  }
+  xf(s = {}) {
+    const key = JSON.stringify(s); if (this.map.has(key)) return this.map.get(key);
+    const al = `<alignment${s.h ? ` horizontal="${s.h}"` : ''} vertical="${s.v || 'center'}"${s.wrap ? ' wrapText="1"' : ''}${s.indent ? ` indent="${s.indent}"` : ''}/>`;
+    const xml = `<xf numFmtId="0" fontId="${this.font(s.f)}" fillId="${this.fill(s.fill)}" borderId="${this.border(s.bd)}" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1">${al}</xf>`;
+    this.xfs.push(xml); const i = this.xfs.length - 1; this.map.set(key, i); return i;
+  }
+  xml() {
+    const blk = (tag, arr) => `<${tag} count="${arr.length}">${arr.join('')}</${tag}>`;
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="${NS}">${blk('fonts', this.fonts)}${blk('fills', this.fills)}${blk('borders', this.borders)}` +
+      `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>${blk('cellXfs', this.xfs)}` +
+      `<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+  }
+}
+
+class Sheet {
+  constructor(name) { this.name = name; this.cells = new Map(); this.merges = []; this.heights = new Map(); this.widths = []; this.freeze = null; this.grid = true; this.filter = null; }
+  cell(r, c, o) { this.cells.set(r * 1000 + c, o); }
+  range(r1, c1, r2, c2, o) {
+    for (let r = r1; r <= r2; r++) for (let c = c1; c <= c2; c++) this.cell(r, c, { s: o.s });
+    this.cell(r1, c1, o);
+    if (r2 > r1 || c2 > c1) this.merges.push(`${colName(c1)}${r1}:${colName(c2)}${r2}`);
+  }
+  height(r, h) { this.heights.set(r, h); }
+  xml(first) {
+    const rows = new Map(); let maxR = 1, maxC = 1;
+    for (const [k, o] of this.cells) { const r = Math.floor(k / 1000), c = k % 1000; if (!rows.has(r)) rows.set(r, []); rows.get(r).push([c, o]); maxR = Math.max(maxR, r); maxC = Math.max(maxC, c); }
+    for (const r of this.heights.keys()) { if (!rows.has(r)) rows.set(r, []); maxR = Math.max(maxR, r); }
+    const run = x => `<r><rPr>${x.b ? '<b/>' : ''}${x.i ? '<i/>' : ''}<sz val="${x.sz || 10}"/><color rgb="FF${x.c || '23233F'}"/><rFont val="Arial"/><family val="2"/></rPr><t xml:space="preserve">${esc(x.t)}</t></r>`;
+    const cellXml = (r, c, o) => {
+      const ref = colName(c) + r, s = o.s ? ` s="${o.s}"` : '';
+      if (o.rich) return `<c r="${ref}"${s} t="inlineStr"><is>${o.rich.map(run).join('')}</is></c>`;
+      if (o.v !== undefined && o.v !== null && o.v !== '') return typeof o.v === 'number' ? `<c r="${ref}"${s}><v>${o.v}</v></c>` : `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${esc(o.v)}</t></is></c>`;
+      return `<c r="${ref}"${s}/>`;
+    };
+    let data = '';
+    for (const r of [...rows.keys()].sort((a, b) => a - b)) {
+      const h = this.heights.get(r), cs = rows.get(r).sort((a, b) => a[0] - b[0]);
+      data += `<row r="${r}"${h ? ` ht="${h}" customHeight="1"` : ''}>${cs.map(([c, o]) => cellXml(r, c, o)).join('')}</row>`;
+    }
+    let pane = '';
+    if (this.freeze) {
+      const { x, y } = this.freeze, act = x && y ? 'bottomRight' : y ? 'bottomLeft' : 'topRight';
+      pane = `<pane${x ? ` xSplit="${x}"` : ''}${y ? ` ySplit="${y}"` : ''} topLeftCell="${colName(x + 1)}${y + 1}" activePane="${act}" state="frozen"/><selection pane="${act}"/>`;
+    }
+    const cols = this.widths.length ? `<cols>${this.widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols>` : '';
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="${NS}"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>` +
+      `<dimension ref="A1:${colName(maxC)}${maxR}"/><sheetViews><sheetView workbookViewId="0"${this.grid ? '' : ' showGridLines="0"'}${first ? ' tabSelected="1"' : ''}>${pane}</sheetView></sheetViews>` +
+      `<sheetFormatPr defaultRowHeight="15"/>${cols}<sheetData>${data}</sheetData>` +
+      (this.filter ? `<autoFilter ref="${this.filter}"/>` : '') +
+      (this.merges.length ? `<mergeCells count="${this.merges.length}">${this.merges.map(m => `<mergeCell ref="${m}"/>`).join('')}</mergeCells>` : '') +
+      `<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/><pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/></worksheet>`;
+  }
+}
+
+/* ---------- input ---------- */
+function sanitize(p) {
+  p = p && typeof p === 'object' ? p : {};
+  const num = (v, a, b, d) => { v = Number(v); return Number.isFinite(v) ? Math.min(b, Math.max(a, Math.round(v))) : d; };
+  const col = (c, d = '#FFFFFF') => /^#[0-9a-f]{6}$/i.test(c) ? c : d;
+  const str = (s, n = 500) => String(s ?? '').slice(0, n);
+  const obj = x => x && typeof x === 'object';
+  const out = { lang: p.lang === 'tr' ? 'tr' : 'en', title: str(p.title, 200), start: /^\d{4}-\d\d-\d\d$/.test(p.start) ? p.start : '2026-10-01', sprintDays: num(p.sprintDays, 1, 60, 14), sprints: num(p.sprints, 1, 52, 12) };
+  out.rows = (Array.isArray(p.rows) ? p.rows : []).filter(obj).slice(0, 100).map(r => ({ label: str(r.label, 200), sub: str(r.sub, 300), lanes: num(r.lanes, 1, 20, 1) }));
+  if (!out.rows.length) out.rows = [{ label: '', sub: '', lanes: 1 }];
+  const LN = out.rows.reduce((a, r) => a + r.lanes, 0);
+  out.items = (Array.isArray(p.items) ? p.items : []).filter(obj).slice(0, 2000).map(i => {
+    const c = num(i.col, 0, out.sprints - 1, 0), r = num(i.row, 0, LN - 1, 0);
+    return { type: str(i.type, 20), title: str(i.title, 300), body: str(i.body, 500), notes: str(i.notes, 5000), color: col(i.color), col: c, row: r,
+      w: num(i.w, 1, out.sprints - c, 1), h: num(i.h, 1, LN - r, 1) };
+  });
+  out.markers = (Array.isArray(p.markers) ? p.markers : []).filter(m => obj(m) && /^\d{4}-\d\d-\d\d$/.test(m.date)).slice(0, 200).map(m => ({ date: m.date, label: str(m.label, 100), color: col(m.color, '#1F8F5F') }));
+  return out;
+}
+
+const DICT = {
+  en: { loc: 'en-GB', sprint: 'Sprint', dateLines: 'Date lines', today: 'Today', details: 'Details', row: 'Row', component: 'Component', type: 'Type', sprints: 'Sprints', start: 'Start', end: 'End', barText: 'Bar text', content: 'Content', dateLine: 'Date line', exported: 'Exported', days: 'days', plan: 'Plan', detailsSheet: 'Details', noContent: 'No content yet.', sprintLen: 'sprints',
+    types: { build: 'Build', design: 'Design', test: 'E2E & UAT', golive: 'Go-live', rollout: 'Rollout & parallel run', demo: 'Demo', note: 'Note', freeze: 'Freeze (TBC)' } },
+  tr: { loc: 'tr-TR', sprint: 'Sprint', dateLines: 'Tarih çizgileri', today: 'Bugün', details: 'Detaylar', row: 'Satır', component: 'Bileşen', type: 'Tür', sprints: 'Sprintler', start: 'Başlangıç', end: 'Bitiş', barText: 'Çubuk metni', content: 'İçerik', dateLine: 'Tarih çizgisi', exported: 'Dışa aktarım', days: 'gün', plan: 'Plan', detailsSheet: 'Detaylar', noContent: 'Henüz içerik yok.', sprintLen: 'sprint',
+    types: { build: 'Geliştirme', design: 'Tasarım', test: 'E2E & UAT', golive: 'Go-live', rollout: 'Yaygınlaştırma & paralel çalışma', demo: 'Demo', note: 'Not', freeze: 'Dondurma (TBD)' } }
+};
+
+const NAVY = '23233F', OR = 'E8883B', LINE = 'DCDBE6', GRID = 'EEEDF4', GROUP = 'C9C7D8', MUTE = '6B6B82';
+const hex = c => c.slice(1).toUpperCase();
+const lum = h => { const n = parseInt(h, 16); return 0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255); };
+const ink = h => lum(h) > 150 ? NAVY : 'FFFFFF';
+const accent = h => lum(h) > 225 ? OR : h;
+const lines = it => it.notes.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+const box = (st, c) => ({ l: [st, c], r: [st, c], t: [st, c], b: [st, c] });
+
+/* ---------- workbook ---------- */
+function buildXlsx(input) {
+  const plan = sanitize(input), L = DICT[plan.lang], reg = new Registry();
+  const N = plan.sprints, last = N + 1, s0 = new Date(plan.start + 'T00:00:00');
+  const sd = i => { const d = new Date(s0); d.setDate(d.getDate() + i * plan.sprintDays); return d; };
+  const fmt = (d, o) => d.toLocaleDateString(L.loc, o);
+  const dm = { day: 'numeric', month: 'short' }, dmy = { day: 'numeric', month: 'short', year: 'numeric' };
+  const groupOf = [], laneEnd = new Set(); let total = 0;
+  plan.rows.forEach((r, gi) => { for (let k = 0; k < r.lanes; k++) groupOf.push(gi); total += r.lanes; laneEnd.add(total - 1); });
+  const rowStart = plan.rows.map((_, gi) => groupOf.indexOf(gi));
+  const taken = new Set();   // drop overlapping items so merged ranges can never collide (Excel would flag the file as corrupt)
+  const sorted = [...plan.items].sort((a, b) => a.row - b.row || a.col - b.col).filter(it => {
+    const keys = []; for (let r = it.row; r < it.row + it.h; r++) for (let c = it.col; c < it.col + it.w; c++) keys.push(r * 1000 + c);
+    if (keys.some(k => taken.has(k))) return false; keys.forEach(k => taken.add(k)); return true;
+  });
+  const span = it => it.w === 1 ? `${L.sprint} ${it.col + 1}` : `${L.sprint} ${it.col + 1}–${it.col + it.w}`;
+  const itemStart = it => sd(it.col), itemEnd = it => { const d = sd(it.col + it.w); d.setDate(d.getDate() - 1); return d; };
+
+  /* ===== Plan sheet ===== */
+  const sh = new Sheet(L.plan); sh.grid = false;
+  sh.widths = [30, ...Array(N).fill(15)];
+  const end = sd(N); end.setDate(end.getDate() - 1);
+  sh.range(1, 1, 1, last, { v: plan.title || 'Project Plan', s: reg.xf({ f: { b: 1, sz: 20 }, h: 'left', bd: { b: ['medium', OR] } }) }); sh.height(1, 38);
+  sh.range(2, 1, 2, last, { v: `${fmt(s0, dmy)} – ${fmt(end, dmy)}  ·  ${N} ${L.sprintLen} × ${plan.sprintDays} ${L.days}  ·  ${L.exported} ${fmt(new Date(), dmy)}`, s: reg.xf({ f: { sz: 9, c: MUTE, i: 1 }, h: 'left' }) }); sh.height(2, 18);
+  sh.height(3, 8);
+  const navyCell = { f: { b: 1, sz: 11, c: 'FFFFFF' }, fill: NAVY, h: 'center', bd: { r: ['thin', '3A3A5C'] } };
+  sh.range(4, 1, 5, 1, { v: '', s: reg.xf({ fill: NAVY }) });
+  for (let i = 0; i < N;) {
+    const d = sd(i), key = d.getFullYear() * 12 + d.getMonth(); let j = i;
+    while (j + 1 < N) { const e = sd(j + 1); if (e.getFullYear() * 12 + e.getMonth() !== key) break; j++; }
+    const m = fmt(d, { month: 'long', year: 'numeric' });
+    sh.range(4, i + 2, 4, j + 2, { v: m.charAt(0).toUpperCase() + m.slice(1), s: reg.xf(navyCell) });
+    i = j + 1;
+  }
+  sh.height(4, 22);
+  const now = new Date(), nx = (now - s0) / (plan.sprintDays * 864e5), todaySprint = nx >= 0 && nx < N ? Math.floor(nx) : -1;
+  for (let i = 0; i < N; i++) {
+    const cur = i === todaySprint, c = cur ? 'A85A14' : NAVY;
+    sh.cell(5, i + 2, { rich: [{ t: `${L.sprint} ${i + 1}`, b: 1, sz: 10, c }, { t: '\n' + fmt(sd(i), dm), sz: 8, c: cur ? 'A85A14' : MUTE }], s: reg.xf({ fill: cur ? 'FDE3C8' : 'ECEBF3', h: 'center', wrap: 1, bd: { r: ['thin', LINE] } }) });
+  }
+  sh.height(5, 32);
+
+  // date lines row (today + markers)
+  const dl = plan.markers.map(m => ({ label: m.label, date: new Date(m.date + 'T00:00:00'), color: hex(m.color) }));
+  if (todaySprint >= 0) dl.push({ label: L.today, date: now, color: OR });
+  const dlBySprint = new Map();
+  dl.sort((a, b) => a.date - b.date).forEach(m => { const x = (m.date - s0) / (plan.sprintDays * 864e5); if (x < 0 || x >= N) return; const k = Math.floor(x); if (!dlBySprint.has(k)) dlBySprint.set(k, []); dlBySprint.get(k).push(m); });
+  let base = 6;
+  if (dlBySprint.size) {
+    sh.cell(6, 1, { v: L.dateLines, s: reg.xf({ f: { b: 1, sz: 10, c: 'A85A14' }, fill: 'FFF4E8', h: 'center', bd: { b: ['thin', LINE], r: ['medium', LINE] } }) });
+    for (let i = 0; i < N; i++) {
+      const ms = dlBySprint.get(i);
+      if (!ms) { sh.cell(6, i + 2, { s: reg.xf({ fill: 'FFF4E8', bd: { b: ['thin', LINE], r: ['thin', GRID] } }) }); continue; }
+      sh.cell(6, i + 2, { v: ms.map(m => `${m.label} · ${fmt(m.date, dm)}`).join('\n'), s: reg.xf({ f: { b: 1, sz: 9, c: ink(ms[0].color) }, fill: ms[0].color, h: 'center', wrap: 1, bd: box('thin', 'FFFFFF') }) });
+    }
+    sh.height(6, 30); base = 7;
+  }
+
+  // lanes: empty cells first
+  for (let ln = 0; ln < total; ln++) {
+    const lastLane = laneEnd.has(ln);
+    sh.height(base + ln, 48);
+    for (let c = 0; c < N; c++) sh.cell(base + ln, c + 2, { s: reg.xf({ bd: { r: ['thin', GRID], b: lastLane ? ['medium', GROUP] : ['thin', GRID] } }) });
+  }
+  plan.rows.forEach((r, gi) => {
+    const r1 = base + rowStart[gi], r2 = r1 + r.lanes - 1, rich = [{ t: r.label, b: 1, sz: 12 }];
+    if (r.sub) rich.push({ t: '\n' + r.sub, sz: 9, c: MUTE });
+    sh.range(r1, 1, r2, 1, { rich, s: reg.xf({ h: 'center', wrap: 1, bd: { r: ['medium', LINE], b: ['medium', GROUP] } }) });
+  });
+  for (const it of sorted) {
+    const r1 = base + it.row, r2 = r1 + it.h - 1, gl = it.type === 'golive' && it.color.toUpperCase() === '#FFFFFF', fill = hex(it.color), fc = gl ? OR : ink(fill);
+    const rich = [{ t: (it.type === 'golive' ? '◆ ' : '') + it.title, b: 1, sz: 10, c: fc }];
+    if (it.body) rich.push({ t: '\n' + it.body, sz: 9, c: fc });
+    const bd = gl ? box('medium', OR) : { l: ['thin', 'FFFFFF'], r: ['thin', 'FFFFFF'], t: ['thin', 'FFFFFF'], b: laneEnd.has(it.row + it.h - 1) ? ['medium', GROUP] : ['thin', 'FFFFFF'] };
+    sh.range(r1, it.col + 2, r2, it.col + it.w + 1, { rich, s: reg.xf({ fill: gl ? 'FFFFFF' : fill, h: 'left', indent: 1, wrap: 1, bd }) });
+  }
+
+  // details boxes
+  let row = base + total;
+  sh.height(row, 16); row++;
+  const withNotes = sorted.filter(i => lines(i).length);
+  sh.range(row, 1, row, last, { v: `${L.details} (${withNotes.length})`, s: reg.xf({ f: { b: 1, sz: 14 }, h: 'left', bd: { b: ['medium', OR] } }) }); sh.height(row, 28); row++;
+  sh.height(row, 8); row++;
+  if (!withNotes.length) {
+    sh.range(row, 2, row, last, { v: L.noContent, s: reg.xf({ f: { i: 1, c: MUTE }, h: 'left' }) }); row++;
+  }
+  const perBand = N >= 10 ? 3 : N >= 6 ? 2 : 1, boxW = Math.max(1, Math.floor((N - (perBand - 1)) / perBand)), cpl = Math.max(8, Math.floor(boxW * 15 * 1.05) - 4);
+  for (let b = 0; b < withNotes.length; b += perBand) {
+    const band = withNotes.slice(b, b + perBand), maxL = Math.max(...band.map(x => lines(x).length));
+    const hts = Array.from({ length: maxL }, (_, i) => Math.max(...band.map(x => { const t = lines(x)[i]; return t ? Math.max(1, Math.ceil((t.length + 2) / cpl)) : 1; })));
+    sh.height(row, 24); sh.height(row + 1, 16); hts.forEach((h, i) => sh.height(row + 2 + i, 14 * h + 4));
+    band.forEach((it, k) => {
+      const c1 = 2 + k * (boxW + 1), c2 = c1 + boxW - 1, fill = hex(it.color), gl = it.type === 'golive' && fill === 'FFFFFF', ac = accent(fill);
+      const side = { l: ['medium', ac], r: ['thin', LINE] };
+      sh.range(row, c1, row, c2, { v: (it.type === 'golive' ? '◆ ' : '') + it.title, s: reg.xf({ f: { b: 1, sz: 11, c: gl ? OR : ink(fill) }, fill, h: 'left', indent: 1, bd: { ...side, t: ['thin', LINE] } }) });
+      sh.range(row + 1, c1, row + 1, c2, { v: `${plan.rows[groupOf[it.row]].label} · ${span(it)} · ${fmt(itemStart(it), dm)} – ${fmt(itemEnd(it), dm)}`, s: reg.xf({ f: { sz: 9, c: MUTE }, fill: 'F6F5F9', h: 'left', indent: 1, bd: side }) });
+      const ls = lines(it);
+      for (let i = 0; i < maxL; i++) {
+        const lastRow = i === maxL - 1;
+        sh.range(row + 2 + i, c1, row + 2 + i, c2, { v: ls[i] ? '• ' + ls[i] : '', s: reg.xf({ f: { sz: 10 }, fill: 'FFFFFF', h: 'left', indent: 1, wrap: 1, v: 'top', bd: { ...side, b: lastRow ? ['thin', LINE] : undefined } }) });
+      }
+    });
+    row += 2 + maxL; sh.height(row, 12); row++;
+  }
+  sh.freeze = { x: 1, y: 5 };
+
+  /* ===== Details sheet ===== */
+  const ds = new Sheet(L.detailsSheet);
+  ds.widths = [5, 26, 32, 22, 14, 14, 14, 28, 64];
+  const head = [['#', 'center'], [L.row, 'left'], [L.component, 'left'], [L.type, 'center'], [L.sprints, 'center'], [L.start, 'center'], [L.end, 'center'], [L.barText, 'left'], [L.content, 'left']];
+  head.forEach(([t, h], i) => ds.cell(1, i + 1, { v: t, s: reg.xf({ f: { b: 1, c: 'FFFFFF' }, fill: NAVY, h, indent: h === 'left' ? 1 : 0, bd: { r: ['thin', '3A3A5C'] } }) }));
+  ds.height(1, 26);
+  let r = 2;
+  const z = n => (n % 2 ? 'F6F5F9' : 'FFFFFF');
+  sorted.forEach((it, n) => {
+    const ls = lines(it), fill = hex(it.color), gl = it.type === 'golive' && fill === 'FFFFFF', bg = z(n), bd = { b: ['thin', GRID] };
+    const base = { fill: bg, bd, wrap: 1, v: 'center' };
+    ds.height(r, Math.max(22, ls.length * 14 + 8));
+    ds.cell(r, 1, { v: n + 1, s: reg.xf({ ...base, f: { c: MUTE }, h: 'center' }) });
+    ds.cell(r, 2, { v: plan.rows[groupOf[it.row]].label, s: reg.xf({ ...base, f: { b: 1 }, h: 'left', indent: 1 }) });
+    ds.cell(r, 3, { v: it.title, s: reg.xf({ ...base, f: { b: 1 }, h: 'left', indent: 1 }) });
+    ds.cell(r, 4, { v: L.types[it.type] || it.type, s: reg.xf({ ...base, f: { b: 1, sz: 9, c: gl ? OR : ink(fill) }, fill, bd: gl ? box('thin', OR) : { ...bd, l: ['thin', 'FFFFFF'], r: ['thin', 'FFFFFF'] }, h: 'center' }) });
+    ds.cell(r, 5, { v: span(it), s: reg.xf({ ...base, h: 'center' }) });
+    ds.cell(r, 6, { v: fmt(itemStart(it), dmy), s: reg.xf({ ...base, h: 'center' }) });
+    ds.cell(r, 7, { v: fmt(itemEnd(it), dmy), s: reg.xf({ ...base, h: 'center' }) });
+    ds.cell(r, 8, { v: it.body, s: reg.xf({ ...base, f: { c: MUTE }, h: 'left', indent: 1 }) });
+    ds.cell(r, 9, { v: ls.map(l => '• ' + l).join('\n'), s: reg.xf({ ...base, h: 'left', indent: 1 }) });
+    r++;
+  });
+  plan.markers.slice().sort((a, b) => a.date.localeCompare(b.date)).forEach((m, k) => {
+    const n = sorted.length + k, bg = z(n), fill = hex(m.color), bd = { b: ['thin', GRID] }, base = { fill: bg, bd, wrap: 1, v: 'center' }, d = new Date(m.date + 'T00:00:00');
+    ds.height(r, 22);
+    ds.cell(r, 1, { v: n + 1, s: reg.xf({ ...base, f: { c: MUTE }, h: 'center' }) });
+    ds.cell(r, 2, { v: '', s: reg.xf(base) });
+    ds.cell(r, 3, { v: m.label, s: reg.xf({ ...base, f: { b: 1 }, h: 'left', indent: 1 }) });
+    ds.cell(r, 4, { v: L.dateLine, s: reg.xf({ ...base, f: { b: 1, sz: 9, c: ink(fill) }, fill, bd: { ...bd, l: ['thin', 'FFFFFF'], r: ['thin', 'FFFFFF'] }, h: 'center' }) });
+    ds.cell(r, 5, { v: '', s: reg.xf(base) });
+    ds.cell(r, 6, { v: fmt(d, dmy), s: reg.xf({ ...base, h: 'center' }) });
+    ds.cell(r, 7, { v: fmt(d, dmy), s: reg.xf({ ...base, h: 'center' }) });
+    ds.cell(r, 8, { v: '', s: reg.xf(base) }); ds.cell(r, 9, { v: '', s: reg.xf(base) });
+    r++;
+  });
+  ds.freeze = { x: 0, y: 1 }; ds.filter = `A1:I${Math.max(2, r - 1)}`;
+
+  const sheets = [sh, ds];
+  const files = [
+    { name: '[Content_Types].xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>` },
+    { name: '_rels/.rels', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
+    { name: 'xl/workbook.xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="${NS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView/></bookViews><sheets>${sheets.map((s, i) => `<sheet name="${esc(s.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets></workbook>` },
+    { name: 'xl/_rels/workbook.xml.rels', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>` },
+    ...sheets.map((s, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: s.xml(i === 0) })),
+    { name: 'xl/styles.xml', data: reg.xml() }
+  ];
+  return zip(files);
+}
+
+module.exports = { buildXlsx };
